@@ -199,6 +199,123 @@
       </tags>
   </entry>
   <entry>
+    <title>iOS 无埋点数据统计方案设计</title>
+    <url>/2019/07/03/iOS-%E6%97%A0%E5%9F%8B%E7%82%B9%E6%95%B0%E6%8D%AE%E7%BB%9F%E8%AE%A1%E6%96%B9%E6%A1%88%E8%AE%BE%E8%AE%A1/</url>
+    <content><![CDATA[<h4 id="先附上参考的文章："><a href="#先附上参考的文章：" class="headerlink" title="先附上参考的文章："></a>先附上参考的文章：</h4><p><a href="https://www.jianshu.com/p/69ce01e15042">iOS无埋点数据SDK实践之路</a><br><a href="https://www.jianshu.com/p/a6afc6252965">iOS无埋点数据统计实践</a></p>
+<h4 id="该方案的统计功能？"><a href="#该方案的统计功能？" class="headerlink" title="该方案的统计功能？"></a>该方案的统计功能？</h4><ul>
+<li>APP进入前台</li>
+<li>按钮点击 （点击次数、按钮名称、点击方法）</li>
+<li>cell点击</li>
+<li>界面停留时长</li>
+<li>APP进入后台</li>
+</ul>
+<h4 id="如何实现无埋点"><a href="#如何实现无埋点" class="headerlink" title="如何实现无埋点"></a>如何实现无埋点</h4><p>利用运行时机制，将类原生方法替换成用户自定义的方法，相当于强行在原本调用栈中插入一个方法，我们在其中插入一段统计代码即可。</p>
+<a id="more"></a>
+<h5 id="如何替换方法-Method-Swizzling"><a href="#如何替换方法-Method-Swizzling" class="headerlink" title="如何替换方法:Method Swizzling"></a>如何替换方法:Method Swizzling</h5><p>函数的调用涉及到3个重要的点：Class、SEL、IMP，Calss作为类型，Method由SEL和IMP组成。我们通过交换Method的IMP达到替换被调用函数的目的。</p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">核心方法：</span><br><span class="line">- (void)sel_exchangeFirstSel:(SEL)sel1 secondSel:(SEL)sel2 &#123;</span><br><span class="line">    [self sel_exchangeClass:[self class] FirstSel:sel1 secondSel:sel2];</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">- (void)sel_exchangeClass:(Class)Class FirstSel:(SEL)sel1 secondSel:(SEL)sel2 &#123;</span><br><span class="line">    Method firstMethod &#x3D; class_getInstanceMethod(Class, sel1);</span><br><span class="line">    Method secondMethod &#x3D; class_getInstanceMethod(Class, sel2);</span><br><span class="line">    method_exchangeImplementations(firstMethod, secondMethod);</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><strong><em>注：</em></strong> 这里主要交换的方法</p>
+<table>
+<thead>
+<tr>
+<th align="center">系统类</th>
+<th align="center">类方法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center">UIControl</td>
+<td align="center">sendAction:to:forEvent</td>
+</tr>
+<tr>
+<td align="center">UIGestureRecognizer</td>
+<td align="center">addTarget:action:</td>
+</tr>
+<tr>
+<td align="center"></td>
+<td align="center">initWithTarget:action:</td>
+</tr>
+<tr>
+<td align="center">UIView</td>
+<td align="center">addGestureRecognizer</td>
+</tr>
+<tr>
+<td align="center">UITableView</td>
+<td align="center">setDelegate</td>
+</tr>
+<tr>
+<td align="center"></td>
+<td align="center">tableView:didSelectRowAtIndexPath:</td>
+</tr>
+<tr>
+<td align="center">NSNotificationCenter</td>
+<td align="center">postNotification</td>
+</tr>
+<tr>
+<td align="center"></td>
+<td align="center">postNotificationName:object:userInfo:</td>
+</tr>
+<tr>
+<td align="center">UIViewController</td>
+<td align="center">viewDidAppear:</td>
+</tr>
+<tr>
+<td align="center"></td>
+<td align="center">viewDidDisappear:</td>
+</tr>
+</tbody></table>
+<h5 id="swizzling函数的时机"><a href="#swizzling函数的时机" class="headerlink" title="swizzling函数的时机"></a>swizzling函数的时机</h5><p>+(void)load函数在你动态加载或者静态引用了这个类的时候，该函数就会被执行，它并不需要你显示的去创建一个类后才会执行，同时它只会执行一次，几乎是完美的swizzling时机。</p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">举例 UIControl</span><br><span class="line"></span><br><span class="line">+ (void)load &#123;</span><br><span class="line">    static dispatch_once_t onceToken;</span><br><span class="line">    dispatch_once(&amp;onceToken, ^&#123;</span><br><span class="line">        </span><br><span class="line">        &#x2F;&#x2F;创建新的sendAction:to:forEvent:方法</span><br><span class="line">        [self sel_exchangeFirstSel:@selector(sendAction:to:forEvent:) secondSel:@selector(ch_sendAction:to:forEvent:)];</span><br><span class="line">    &#125;);</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h5 id="加入数据统计代码"><a href="#加入数据统计代码" class="headerlink" title="加入数据统计代码"></a>加入数据统计代码</h5><p>在swizzling成功后，我们在其中加入统计代码。为了保证响应链的完整，我们还需要调用替换过的方法，让事件传递下去，不去影响系统的处理。</p>
+<ul>
+<li>这里采用 <code>内联函数</code> 将该方法包起来使用 用于过滤黑名单（不参与统计的控制器）</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;** 黑名单 不需要追踪的控制器 *&#x2F;</span><br><span class="line">#import &lt;UIKit&#x2F;UIKit.h&gt;</span><br><span class="line">UIKIT_STATIC_INLINE BOOL kShouldTrackClass(Class aClass)&#123;</span><br><span class="line">    static NSSet *blacklistedClasses &#x3D; nil;</span><br><span class="line">    static dispatch_once_t onceToken;</span><br><span class="line">    dispatch_once(&amp;onceToken, ^&#123;</span><br><span class="line">&#x2F;&#x2F;        NSString *path &#x3D; [[NSBundle mainBundle] pathForResource:@&quot;BlackListed&quot; ofType:@&quot;plist&quot;];</span><br><span class="line">&#x2F;&#x2F;        NSArray *blacklistedClassNames &#x3D; [NSArray arrayWithContentsOfFile:path];</span><br><span class="line">        </span><br><span class="line">        NSArray *blacklistedClassNames &#x3D; [LogDAO sharedInstance].blackListArray;</span><br><span class="line">        NSMutableSet *transformedClasses &#x3D; [NSMutableSet setWithCapacity:blacklistedClassNames.count];</span><br><span class="line">        for (NSString *className in blacklistedClassNames) &#123;</span><br><span class="line">            [transformedClasses addObject:NSClassFromString(className)];</span><br><span class="line">        &#125;</span><br><span class="line">        blacklistedClasses &#x3D; [transformedClasses copy];</span><br><span class="line">    &#125;);</span><br><span class="line">    return ![blacklistedClasses containsObject:aClass];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h5 id="统计方式：操作数据库"><a href="#统计方式：操作数据库" class="headerlink" title="统计方式：操作数据库"></a>统计方式：操作数据库</h5><ul>
+<li>数据库地址：<code>/var/mobile/Containers/Data/Application/······/Library/Caches/TheOnlineTax/Database/log.sqlite</code></li>
+<li>数据库表名为 <code>info_log</code></li>
+<li>表中的参数 也是模型中的属性</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">typedef NS_ENUM(NSUInteger, LogType) &#123;</span><br><span class="line">    LogTypeNone &#x3D; 0,    &#x2F;&#x2F; 未知</span><br><span class="line">    LogTypeLaunch,      &#x2F;&#x2F; app 启动或前台</span><br><span class="line">    LogTypeButtonClick, &#x2F;&#x2F; 按钮点击</span><br><span class="line">    LogTypeCellClick,   &#x2F;&#x2F; cell点击</span><br><span class="line">    LogTypeVCRemainTime,&#x2F;&#x2F; 界面停留时间</span><br><span class="line">    LogTypeTerminated,  &#x2F;&#x2F; app 终止或后台</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">@property (nonatomic, copy) NSString *vc_id;&#x2F;&#x2F; 控制器名称 </span><br><span class="line">@property (nonatomic) NSTimeInterval remainTime; &#x2F;&#x2F;停留时间</span><br><span class="line">@property (nonatomic, copy) NSString *btn_id;&#x2F;&#x2F; 按钮名称</span><br><span class="line">@property (nonatomic, copy) NSString *functionName;&#x2F;&#x2F; 方法名称</span><br><span class="line">@property (nonatomic, assign) NSInteger num;&#x2F;&#x2F; 点击次数</span><br><span class="line">@property (nonatomic) NSTimeInterval lastTime; &#x2F;&#x2F;最后执行时间</span><br><span class="line">@property (nonatomic, assign) LogType logType; &#x2F;&#x2F;记录类型</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li>插入之前会判断是否存在 若存在只更新表</li>
+<li>按钮次数 是通过 vc_id 和 btn_id 进行查表 累加所得</li>
+<li>具体逻辑可看LogDAO文件</li>
+</ul>
+<h5 id="数据上传服务器"><a href="#数据上传服务器" class="headerlink" title="数据上传服务器"></a>数据上传服务器</h5><p>因没有后台存储这些统计出来的数据，暂时使用后端云Bmob存储</p>
+<ul>
+<li>触发上传的时机</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">目前设计 (上传成功数据库的表里数据清空)</span><br><span class="line">1.是APP进入后台自动触发触发 </span><br><span class="line">2.用户退出登录操作触发</span><br></pre></td></tr></table></figure>
+<ul>
+<li>上传的拼接数据</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">NSString *userID &#x3D; @&quot;0&quot;;&#x2F;&#x2F;必须默认0</span><br><span class="line">    if ([AppDelegate trackGetUserID].length&gt;0) &#123;</span><br><span class="line">        userID &#x3D; [AppDelegate trackGetUserID];</span><br><span class="line">    &#125;</span><br><span class="line">    NSDictionary *dic &#x3D; @&#123;</span><br><span class="line">                          &#x2F;&#x2F;模型数组转成字典数组</span><br><span class="line">                          @&quot;list&quot; : [LogDTO mj_keyValuesArrayWithObjectArray:[[LogDAO sharedInstance] getAllData]],</span><br><span class="line">                          &#x2F;&#x2F;应用名称</span><br><span class="line">                          @&quot;productName&quot; : kDisplayName,</span><br><span class="line">                          &#x2F;&#x2F;bundleId</span><br><span class="line">                          @&quot;productID&quot; : [[NSBundle mainBundle] bundleIdentifier],</span><br><span class="line">                          &#x2F;&#x2F;应用版本号</span><br><span class="line">                          @&quot;version&quot; : kVersion,</span><br><span class="line">                          &#x2F;&#x2F;设备版本</span><br><span class="line">                          @&quot;osVersion&quot; : [NSString stringWithFormat:@&quot;%.1f&quot;,[DeviceAndSystemTool systemVersion]],</span><br><span class="line">                          &#x2F;&#x2F;设备机型</span><br><span class="line">                          @&quot;osDeviceType&quot; : KStringIsEmpty([DeviceAndSystemTool getDeviceName]),</span><br><span class="line">                          &#x2F;&#x2F;网络类型</span><br><span class="line">                          @&quot;networkType&quot; : KStringIsEmpty([DeviceAndSystemTool networkTypeName]),</span><br><span class="line">                          &#x2F;&#x2F;运营商</span><br><span class="line">                          @&quot;isp&quot; : KStringIsEmpty([DeviceAndSystemTool wsd_telephonyNetworkInfo]),</span><br><span class="line">                          &#x2F;&#x2F;定位（省市区）</span><br><span class="line">                          @&quot;gps&quot; : KStringIsEmpty(self.strLocationInfo)</span><br><span class="line">                          &#125;;</span><br></pre></td></tr></table></figure>
+<ul>
+<li>APP启动会先获取服务器的数据 若有只在原有基础上更新不会新增一条数据（改动是TrackData和updateAT字段）会根据UserID字段区分数据</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;** 新增一条数据 *&#x2F;</span><br><span class="line"></span><br><span class="line">    BmobObject *trackBmob &#x3D; [BmobObject objectWithClassName:@&quot;TrackAction&quot;];</span><br><span class="line">    [trackBmob setObject:dic forKey:@&quot;TrackData&quot;];</span><br><span class="line">    [trackBmob setObject:[AppDelegate trackGetUserID] forKey:@&quot;UserID&quot;];</span><br><span class="line">    [trackBmob saveInBackgroundWithResultBlock:^(BOOL isSuccessful, NSError *error) &#123;</span><br><span class="line">        &#x2F;&#x2F;进行操作</span><br><span class="line">        if (isSuccessful) &#123;</span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(YES,nil);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;else&#123;</span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(NO,error);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;];</span><br></pre></td></tr></table></figure>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;** 更新一条数据 *&#x2F;</span><br><span class="line"></span><br><span class="line">&#x2F;&#x2F;创建查表对象</span><br><span class="line">    BmobQuery   *bquery &#x3D; [BmobQuery queryWithClassName:@&quot;TrackAction&quot;];</span><br><span class="line">    &#x2F;&#x2F;设置查询中该字段是有值的结果</span><br><span class="line">    [bquery whereKeyExists:@&quot;UserID&quot;];</span><br><span class="line">    &#x2F;&#x2F;设置查询中该字段 值是否相等的结果</span><br><span class="line">    [bquery whereKey:@&quot;UserID&quot; equalTo:[AppDelegate trackGetUserID]];</span><br><span class="line">    &#x2F;&#x2F;查询</span><br><span class="line">    [bquery findObjectsInBackgroundWithBlock:^(NSArray *array, NSError *error) &#123;</span><br><span class="line">        if (error)&#123;</span><br><span class="line">            &#x2F;&#x2F;进行错误处理</span><br><span class="line">        &#125;else&#123;</span><br><span class="line">            if (array) &#123;</span><br><span class="line">                BmobObject *obj &#x3D; array[0];</span><br><span class="line"></span><br><span class="line">                NSString *userID &#x3D; @&quot;0&quot;;&#x2F;&#x2F;必须默认0</span><br><span class="line">                if ([AppDelegate trackGetUserID].length&gt;0) &#123;</span><br><span class="line">                    userID &#x3D; [AppDelegate trackGetUserID];</span><br><span class="line">                &#125;</span><br><span class="line">                NSDictionary *dic &#x3D; @&#123;</span><br><span class="line">                                      &#x2F;&#x2F;模型数组转成字典数组</span><br><span class="line">                                      @&quot;list&quot; : [LogDTO mj_keyValuesArrayWithObjectArray:[[LogDAO sharedInstance] getAllData]],</span><br><span class="line">                                      &#x2F;&#x2F;userid</span><br><span class="line">                                      @&quot;userid&quot; : KStringIsEmpty(userID),</span><br><span class="line">                                      &#x2F;&#x2F;应用名称</span><br><span class="line">                                      @&quot;productName&quot; : kDisplayName,</span><br><span class="line">                                      &#x2F;&#x2F;bundleId</span><br><span class="line">                                      @&quot;productID&quot; : [[NSBundle mainBundle] bundleIdentifier],</span><br><span class="line">                                      &#x2F;&#x2F;应用版本号</span><br><span class="line">                                      @&quot;version&quot; : kVersion,</span><br><span class="line">                                      &#x2F;&#x2F;设备版本</span><br><span class="line">                                      @&quot;osVersion&quot; : [NSString stringWithFormat:@&quot;%.1f&quot;,[DeviceAndSystemTool systemVersion]],</span><br><span class="line">                                      &#x2F;&#x2F;设备机型</span><br><span class="line">                                      @&quot;osDeviceType&quot; : KStringIsEmpty([DeviceAndSystemTool getDeviceName]),</span><br><span class="line">                                      &#x2F;&#x2F;网络类型</span><br><span class="line">                                      @&quot;networkType&quot; : KStringIsEmpty([DeviceAndSystemTool networkTypeName]),</span><br><span class="line">                                      &#x2F;&#x2F;运营商</span><br><span class="line">                                      @&quot;isp&quot; : KStringIsEmpty([DeviceAndSystemTool wsd_telephonyNetworkInfo]),</span><br><span class="line">                                      &#x2F;&#x2F;定位（省市区）</span><br><span class="line">                                      @&quot;gps&quot; : KStringIsEmpty(self.strLocationInfo)</span><br><span class="line">                                      &#125;;</span><br><span class="line"></span><br><span class="line">                BmobObject *obj1 &#x3D; [BmobObject objectWithoutDataWithClassName:obj.className objectId:obj.objectId];</span><br><span class="line">                &#x2F;&#x2F;设置cheatMode为YES</span><br><span class="line">                [obj1 setObject:dic forKey:@&quot;TrackData&quot;];</span><br><span class="line">                &#x2F;&#x2F;异步更新数据</span><br><span class="line">                [obj1 updateInBackground];</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;];</span><br></pre></td></tr></table></figure>
+
+<h4 id="引用方法："><a href="#引用方法：" class="headerlink" title="引用方法："></a>引用方法：</h4><p>目前没有集成到pod上 只能手动导入 这是相关文件：<a href="https://github.com/NickChenHao/TrackAction.git">GitHub</a></p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">【 使用说明 】</span><br><span class="line"> 1.需要依赖 pod &#39;MJExtension&#39; 和 pod &#39;AFNetworking&#39; 请确保项目中已有</span><br><span class="line"> 2.将文件拖入项目中</span><br><span class="line"> 3.需在pch文件中引用  #import &quot;TrackAction.h&quot;</span><br><span class="line"> 4.需在AppDelegate.m文件中</span><br><span class="line">   a.调用 createTablesNeeded 创建数据库</span><br><span class="line">   b.重写 trackGetUserID     配置userID</span><br><span class="line">   c.重写 trackServiceURL    配置上传服务器的地址</span><br><span class="line"> 5.可添加不需要统计的控制器在BlackListed.plist</span><br></pre></td></tr></table></figure>
+
+<h4 id="更新部分【重要】"><a href="#更新部分【重要】" class="headerlink" title="更新部分【重要】"></a>更新部分【重要】</h4><h5 id="引用方法"><a href="#引用方法" class="headerlink" title="引用方法"></a><del>引用方法</del></h5><ul>
+<li>手动导入 这是相关文件：<a href="https://github.com/NickChenHao/TrackAction.git">GitHub</a></li>
+<li>引用svn私有库 <code>pod &#39;ASTrackAction&#39;,&#39;1.0.0&#39;</code></li>
+</ul>
+<h5 id="使用说明"><a href="#使用说明" class="headerlink" title="使用说明"></a><del>使用说明</del></h5><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">【 使用说明 】</span><br><span class="line"> 1.依赖 pod &#39;MJExtension&#39; 和 pod &#39;AFNetworking&#39;</span><br><span class="line"> 2.需在pch文件中引用  #import &quot;TrackAction.h&quot;</span><br><span class="line"> 3.需在AppDelegate里的方法实现 配置track信息的方法 在LogDAO类中 （不开启埋点功能 注释即可）</span><br></pre></td></tr></table></figure>
+<h5 id="上传的拼接数据"><a href="#上传的拼接数据" class="headerlink" title="上传的拼接数据"></a><del>上传的拼接数据</del></h5><p>修改为<br>1.先判断是开启埋点功能<br>2.再判断是否自定义服务器地址 若有则AFN请求 若无则上传至Bmob后端云</p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">    if (!self.isOpenTracker) &#123;</span><br><span class="line">        return;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    NSString *userID &#x3D; @&quot;0&quot;;&#x2F;&#x2F;必须默认0</span><br><span class="line">    if (self.userId.length&gt;0) &#123;</span><br><span class="line">        userID &#x3D; self.userId;</span><br><span class="line">    &#125;</span><br><span class="line">    NSDictionary *dic &#x3D; @&#123;</span><br><span class="line">                          &#x2F;&#x2F;模型数组转成字典数组</span><br><span class="line">                          @&quot;list&quot; : [LogDTO mj_keyValuesArrayWithObjectArray:[[LogDAO sharedInstance] getAllData]],</span><br><span class="line">                          &#x2F;&#x2F;userid</span><br><span class="line">                          @&quot;userid&quot; : KStringIsEmpty(userID),</span><br><span class="line">                          &#x2F;&#x2F;应用名称</span><br><span class="line">                          @&quot;productName&quot; : kDisplayName,</span><br><span class="line">                          &#x2F;&#x2F;bundleId</span><br><span class="line">                          @&quot;productID&quot; : [[NSBundle mainBundle] bundleIdentifier],</span><br><span class="line">                          &#x2F;&#x2F;应用版本号</span><br><span class="line">                          @&quot;version&quot; : kVersion,</span><br><span class="line">                          &#x2F;&#x2F;设备版本</span><br><span class="line">                          @&quot;osVersion&quot; : [NSString stringWithFormat:@&quot;%.1f&quot;,[DeviceAndSystemTool systemVersion]],</span><br><span class="line">                          &#x2F;&#x2F;设备机型</span><br><span class="line">                          @&quot;osDeviceType&quot; : KStringIsEmpty([DeviceAndSystemTool getDeviceName]),</span><br><span class="line">                          &#x2F;&#x2F;网络类型</span><br><span class="line">                          @&quot;networkType&quot; : KStringIsEmpty([DeviceAndSystemTool networkTypeName]),</span><br><span class="line">                          &#x2F;&#x2F;运营商</span><br><span class="line">                          @&quot;isp&quot; : KStringIsEmpty([DeviceAndSystemTool wsd_telephonyNetworkInfo]),</span><br><span class="line">                          &#x2F;&#x2F;定位（省市区）</span><br><span class="line">                          @&quot;gps&quot; : KStringIsEmpty(self.strLocationInfo)</span><br><span class="line">                          &#125;;</span><br><span class="line"></span><br><span class="line">    if (!ISEMPTY(self.serviceURL)) &#123;</span><br><span class="line">#pragma mark - AFN</span><br><span class="line"></span><br><span class="line">        [TrackActionServiceManager postParameter:dic Success:^(NSURLSessionDataTask *operation, id responseObject) &#123;</span><br><span class="line"></span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(YES,nil);</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">        &#125; Failure:^(NSURLSessionDataTask *operation, NSError *error) &#123;</span><br><span class="line"></span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(NO,error);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;];</span><br><span class="line">    &#125;else&#123;</span><br><span class="line"></span><br><span class="line">#pragma mark - 后端云SDK</span><br><span class="line"></span><br><span class="line">        BmobObject *trackBmob &#x3D; [BmobObject objectWithClassName:@&quot;TrackAction&quot;];</span><br><span class="line">        [trackBmob setObject:dic forKey:@&quot;TrackData&quot;];</span><br><span class="line">        [trackBmob setObject:self.userId forKey:@&quot;UserID&quot;];</span><br><span class="line">        [trackBmob saveInBackgroundWithResultBlock:^(BOOL isSuccessful, NSError *error) &#123;</span><br><span class="line">            &#x2F;&#x2F;进行操作</span><br><span class="line">            if (isSuccessful) &#123;</span><br><span class="line">                if (handler) &#123;</span><br><span class="line">                    handler(YES,nil);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;else&#123;</span><br><span class="line">                if (handler) &#123;</span><br><span class="line">                    handler(NO,error);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;];</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+]]></content>
+      <categories>
+        <category>aboutJub</category>
+      </categories>
+      <tags>
+        <tag>iOS</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>sonar代码检测插件</title>
     <url>/2019/08/27/sonar%E4%BB%A3%E7%A0%81%E6%A3%80%E6%B5%8B%E6%8F%92%E4%BB%B6/</url>
     <content><![CDATA[<p>SonarQube®是一种自动代码审查工具，用于检测代码中的错误，漏洞和代码异味。它可以与您现有的工作流程集成，以便在项目分支和拉取请求之间进行连续的代码检查。</p>
@@ -326,123 +443,6 @@
       </tags>
   </entry>
   <entry>
-    <title>iOS 无埋点数据统计方案设计</title>
-    <url>/2019/07/03/iOS-%E6%97%A0%E5%9F%8B%E7%82%B9%E6%95%B0%E6%8D%AE%E7%BB%9F%E8%AE%A1%E6%96%B9%E6%A1%88%E8%AE%BE%E8%AE%A1/</url>
-    <content><![CDATA[<h4 id="先附上参考的文章："><a href="#先附上参考的文章：" class="headerlink" title="先附上参考的文章："></a>先附上参考的文章：</h4><p><a href="https://www.jianshu.com/p/69ce01e15042">iOS无埋点数据SDK实践之路</a><br><a href="https://www.jianshu.com/p/a6afc6252965">iOS无埋点数据统计实践</a></p>
-<h4 id="该方案的统计功能？"><a href="#该方案的统计功能？" class="headerlink" title="该方案的统计功能？"></a>该方案的统计功能？</h4><ul>
-<li>APP进入前台</li>
-<li>按钮点击 （点击次数、按钮名称、点击方法）</li>
-<li>cell点击</li>
-<li>界面停留时长</li>
-<li>APP进入后台</li>
-</ul>
-<h4 id="如何实现无埋点"><a href="#如何实现无埋点" class="headerlink" title="如何实现无埋点"></a>如何实现无埋点</h4><p>利用运行时机制，将类原生方法替换成用户自定义的方法，相当于强行在原本调用栈中插入一个方法，我们在其中插入一段统计代码即可。</p>
-<a id="more"></a>
-<h5 id="如何替换方法-Method-Swizzling"><a href="#如何替换方法-Method-Swizzling" class="headerlink" title="如何替换方法:Method Swizzling"></a>如何替换方法:Method Swizzling</h5><p>函数的调用涉及到3个重要的点：Class、SEL、IMP，Calss作为类型，Method由SEL和IMP组成。我们通过交换Method的IMP达到替换被调用函数的目的。</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">核心方法：</span><br><span class="line">- (void)sel_exchangeFirstSel:(SEL)sel1 secondSel:(SEL)sel2 &#123;</span><br><span class="line">    [self sel_exchangeClass:[self class] FirstSel:sel1 secondSel:sel2];</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">- (void)sel_exchangeClass:(Class)Class FirstSel:(SEL)sel1 secondSel:(SEL)sel2 &#123;</span><br><span class="line">    Method firstMethod &#x3D; class_getInstanceMethod(Class, sel1);</span><br><span class="line">    Method secondMethod &#x3D; class_getInstanceMethod(Class, sel2);</span><br><span class="line">    method_exchangeImplementations(firstMethod, secondMethod);</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p><strong><em>注：</em></strong> 这里主要交换的方法</p>
-<table>
-<thead>
-<tr>
-<th align="center">系统类</th>
-<th align="center">类方法</th>
-</tr>
-</thead>
-<tbody><tr>
-<td align="center">UIControl</td>
-<td align="center">sendAction:to:forEvent</td>
-</tr>
-<tr>
-<td align="center">UIGestureRecognizer</td>
-<td align="center">addTarget:action:</td>
-</tr>
-<tr>
-<td align="center"></td>
-<td align="center">initWithTarget:action:</td>
-</tr>
-<tr>
-<td align="center">UIView</td>
-<td align="center">addGestureRecognizer</td>
-</tr>
-<tr>
-<td align="center">UITableView</td>
-<td align="center">setDelegate</td>
-</tr>
-<tr>
-<td align="center"></td>
-<td align="center">tableView:didSelectRowAtIndexPath:</td>
-</tr>
-<tr>
-<td align="center">NSNotificationCenter</td>
-<td align="center">postNotification</td>
-</tr>
-<tr>
-<td align="center"></td>
-<td align="center">postNotificationName:object:userInfo:</td>
-</tr>
-<tr>
-<td align="center">UIViewController</td>
-<td align="center">viewDidAppear:</td>
-</tr>
-<tr>
-<td align="center"></td>
-<td align="center">viewDidDisappear:</td>
-</tr>
-</tbody></table>
-<h5 id="swizzling函数的时机"><a href="#swizzling函数的时机" class="headerlink" title="swizzling函数的时机"></a>swizzling函数的时机</h5><p>+(void)load函数在你动态加载或者静态引用了这个类的时候，该函数就会被执行，它并不需要你显示的去创建一个类后才会执行，同时它只会执行一次，几乎是完美的swizzling时机。</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">举例 UIControl</span><br><span class="line"></span><br><span class="line">+ (void)load &#123;</span><br><span class="line">    static dispatch_once_t onceToken;</span><br><span class="line">    dispatch_once(&amp;onceToken, ^&#123;</span><br><span class="line">        </span><br><span class="line">        &#x2F;&#x2F;创建新的sendAction:to:forEvent:方法</span><br><span class="line">        [self sel_exchangeFirstSel:@selector(sendAction:to:forEvent:) secondSel:@selector(ch_sendAction:to:forEvent:)];</span><br><span class="line">    &#125;);</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<h5 id="加入数据统计代码"><a href="#加入数据统计代码" class="headerlink" title="加入数据统计代码"></a>加入数据统计代码</h5><p>在swizzling成功后，我们在其中加入统计代码。为了保证响应链的完整，我们还需要调用替换过的方法，让事件传递下去，不去影响系统的处理。</p>
-<ul>
-<li>这里采用 <code>内联函数</code> 将该方法包起来使用 用于过滤黑名单（不参与统计的控制器）</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;** 黑名单 不需要追踪的控制器 *&#x2F;</span><br><span class="line">#import &lt;UIKit&#x2F;UIKit.h&gt;</span><br><span class="line">UIKIT_STATIC_INLINE BOOL kShouldTrackClass(Class aClass)&#123;</span><br><span class="line">    static NSSet *blacklistedClasses &#x3D; nil;</span><br><span class="line">    static dispatch_once_t onceToken;</span><br><span class="line">    dispatch_once(&amp;onceToken, ^&#123;</span><br><span class="line">&#x2F;&#x2F;        NSString *path &#x3D; [[NSBundle mainBundle] pathForResource:@&quot;BlackListed&quot; ofType:@&quot;plist&quot;];</span><br><span class="line">&#x2F;&#x2F;        NSArray *blacklistedClassNames &#x3D; [NSArray arrayWithContentsOfFile:path];</span><br><span class="line">        </span><br><span class="line">        NSArray *blacklistedClassNames &#x3D; [LogDAO sharedInstance].blackListArray;</span><br><span class="line">        NSMutableSet *transformedClasses &#x3D; [NSMutableSet setWithCapacity:blacklistedClassNames.count];</span><br><span class="line">        for (NSString *className in blacklistedClassNames) &#123;</span><br><span class="line">            [transformedClasses addObject:NSClassFromString(className)];</span><br><span class="line">        &#125;</span><br><span class="line">        blacklistedClasses &#x3D; [transformedClasses copy];</span><br><span class="line">    &#125;);</span><br><span class="line">    return ![blacklistedClasses containsObject:aClass];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<h5 id="统计方式：操作数据库"><a href="#统计方式：操作数据库" class="headerlink" title="统计方式：操作数据库"></a>统计方式：操作数据库</h5><ul>
-<li>数据库地址：<code>/var/mobile/Containers/Data/Application/······/Library/Caches/TheOnlineTax/Database/log.sqlite</code></li>
-<li>数据库表名为 <code>info_log</code></li>
-<li>表中的参数 也是模型中的属性</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">typedef NS_ENUM(NSUInteger, LogType) &#123;</span><br><span class="line">    LogTypeNone &#x3D; 0,    &#x2F;&#x2F; 未知</span><br><span class="line">    LogTypeLaunch,      &#x2F;&#x2F; app 启动或前台</span><br><span class="line">    LogTypeButtonClick, &#x2F;&#x2F; 按钮点击</span><br><span class="line">    LogTypeCellClick,   &#x2F;&#x2F; cell点击</span><br><span class="line">    LogTypeVCRemainTime,&#x2F;&#x2F; 界面停留时间</span><br><span class="line">    LogTypeTerminated,  &#x2F;&#x2F; app 终止或后台</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">@property (nonatomic, copy) NSString *vc_id;&#x2F;&#x2F; 控制器名称 </span><br><span class="line">@property (nonatomic) NSTimeInterval remainTime; &#x2F;&#x2F;停留时间</span><br><span class="line">@property (nonatomic, copy) NSString *btn_id;&#x2F;&#x2F; 按钮名称</span><br><span class="line">@property (nonatomic, copy) NSString *functionName;&#x2F;&#x2F; 方法名称</span><br><span class="line">@property (nonatomic, assign) NSInteger num;&#x2F;&#x2F; 点击次数</span><br><span class="line">@property (nonatomic) NSTimeInterval lastTime; &#x2F;&#x2F;最后执行时间</span><br><span class="line">@property (nonatomic, assign) LogType logType; &#x2F;&#x2F;记录类型</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li>插入之前会判断是否存在 若存在只更新表</li>
-<li>按钮次数 是通过 vc_id 和 btn_id 进行查表 累加所得</li>
-<li>具体逻辑可看LogDAO文件</li>
-</ul>
-<h5 id="数据上传服务器"><a href="#数据上传服务器" class="headerlink" title="数据上传服务器"></a>数据上传服务器</h5><p>因没有后台存储这些统计出来的数据，暂时使用后端云Bmob存储</p>
-<ul>
-<li>触发上传的时机</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">目前设计 (上传成功数据库的表里数据清空)</span><br><span class="line">1.是APP进入后台自动触发触发 </span><br><span class="line">2.用户退出登录操作触发</span><br></pre></td></tr></table></figure>
-<ul>
-<li>上传的拼接数据</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">NSString *userID &#x3D; @&quot;0&quot;;&#x2F;&#x2F;必须默认0</span><br><span class="line">    if ([AppDelegate trackGetUserID].length&gt;0) &#123;</span><br><span class="line">        userID &#x3D; [AppDelegate trackGetUserID];</span><br><span class="line">    &#125;</span><br><span class="line">    NSDictionary *dic &#x3D; @&#123;</span><br><span class="line">                          &#x2F;&#x2F;模型数组转成字典数组</span><br><span class="line">                          @&quot;list&quot; : [LogDTO mj_keyValuesArrayWithObjectArray:[[LogDAO sharedInstance] getAllData]],</span><br><span class="line">                          &#x2F;&#x2F;应用名称</span><br><span class="line">                          @&quot;productName&quot; : kDisplayName,</span><br><span class="line">                          &#x2F;&#x2F;bundleId</span><br><span class="line">                          @&quot;productID&quot; : [[NSBundle mainBundle] bundleIdentifier],</span><br><span class="line">                          &#x2F;&#x2F;应用版本号</span><br><span class="line">                          @&quot;version&quot; : kVersion,</span><br><span class="line">                          &#x2F;&#x2F;设备版本</span><br><span class="line">                          @&quot;osVersion&quot; : [NSString stringWithFormat:@&quot;%.1f&quot;,[DeviceAndSystemTool systemVersion]],</span><br><span class="line">                          &#x2F;&#x2F;设备机型</span><br><span class="line">                          @&quot;osDeviceType&quot; : KStringIsEmpty([DeviceAndSystemTool getDeviceName]),</span><br><span class="line">                          &#x2F;&#x2F;网络类型</span><br><span class="line">                          @&quot;networkType&quot; : KStringIsEmpty([DeviceAndSystemTool networkTypeName]),</span><br><span class="line">                          &#x2F;&#x2F;运营商</span><br><span class="line">                          @&quot;isp&quot; : KStringIsEmpty([DeviceAndSystemTool wsd_telephonyNetworkInfo]),</span><br><span class="line">                          &#x2F;&#x2F;定位（省市区）</span><br><span class="line">                          @&quot;gps&quot; : KStringIsEmpty(self.strLocationInfo)</span><br><span class="line">                          &#125;;</span><br></pre></td></tr></table></figure>
-<ul>
-<li>APP启动会先获取服务器的数据 若有只在原有基础上更新不会新增一条数据（改动是TrackData和updateAT字段）会根据UserID字段区分数据</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;** 新增一条数据 *&#x2F;</span><br><span class="line"></span><br><span class="line">    BmobObject *trackBmob &#x3D; [BmobObject objectWithClassName:@&quot;TrackAction&quot;];</span><br><span class="line">    [trackBmob setObject:dic forKey:@&quot;TrackData&quot;];</span><br><span class="line">    [trackBmob setObject:[AppDelegate trackGetUserID] forKey:@&quot;UserID&quot;];</span><br><span class="line">    [trackBmob saveInBackgroundWithResultBlock:^(BOOL isSuccessful, NSError *error) &#123;</span><br><span class="line">        &#x2F;&#x2F;进行操作</span><br><span class="line">        if (isSuccessful) &#123;</span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(YES,nil);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;else&#123;</span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(NO,error);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;];</span><br></pre></td></tr></table></figure>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;** 更新一条数据 *&#x2F;</span><br><span class="line"></span><br><span class="line">&#x2F;&#x2F;创建查表对象</span><br><span class="line">    BmobQuery   *bquery &#x3D; [BmobQuery queryWithClassName:@&quot;TrackAction&quot;];</span><br><span class="line">    &#x2F;&#x2F;设置查询中该字段是有值的结果</span><br><span class="line">    [bquery whereKeyExists:@&quot;UserID&quot;];</span><br><span class="line">    &#x2F;&#x2F;设置查询中该字段 值是否相等的结果</span><br><span class="line">    [bquery whereKey:@&quot;UserID&quot; equalTo:[AppDelegate trackGetUserID]];</span><br><span class="line">    &#x2F;&#x2F;查询</span><br><span class="line">    [bquery findObjectsInBackgroundWithBlock:^(NSArray *array, NSError *error) &#123;</span><br><span class="line">        if (error)&#123;</span><br><span class="line">            &#x2F;&#x2F;进行错误处理</span><br><span class="line">        &#125;else&#123;</span><br><span class="line">            if (array) &#123;</span><br><span class="line">                BmobObject *obj &#x3D; array[0];</span><br><span class="line"></span><br><span class="line">                NSString *userID &#x3D; @&quot;0&quot;;&#x2F;&#x2F;必须默认0</span><br><span class="line">                if ([AppDelegate trackGetUserID].length&gt;0) &#123;</span><br><span class="line">                    userID &#x3D; [AppDelegate trackGetUserID];</span><br><span class="line">                &#125;</span><br><span class="line">                NSDictionary *dic &#x3D; @&#123;</span><br><span class="line">                                      &#x2F;&#x2F;模型数组转成字典数组</span><br><span class="line">                                      @&quot;list&quot; : [LogDTO mj_keyValuesArrayWithObjectArray:[[LogDAO sharedInstance] getAllData]],</span><br><span class="line">                                      &#x2F;&#x2F;userid</span><br><span class="line">                                      @&quot;userid&quot; : KStringIsEmpty(userID),</span><br><span class="line">                                      &#x2F;&#x2F;应用名称</span><br><span class="line">                                      @&quot;productName&quot; : kDisplayName,</span><br><span class="line">                                      &#x2F;&#x2F;bundleId</span><br><span class="line">                                      @&quot;productID&quot; : [[NSBundle mainBundle] bundleIdentifier],</span><br><span class="line">                                      &#x2F;&#x2F;应用版本号</span><br><span class="line">                                      @&quot;version&quot; : kVersion,</span><br><span class="line">                                      &#x2F;&#x2F;设备版本</span><br><span class="line">                                      @&quot;osVersion&quot; : [NSString stringWithFormat:@&quot;%.1f&quot;,[DeviceAndSystemTool systemVersion]],</span><br><span class="line">                                      &#x2F;&#x2F;设备机型</span><br><span class="line">                                      @&quot;osDeviceType&quot; : KStringIsEmpty([DeviceAndSystemTool getDeviceName]),</span><br><span class="line">                                      &#x2F;&#x2F;网络类型</span><br><span class="line">                                      @&quot;networkType&quot; : KStringIsEmpty([DeviceAndSystemTool networkTypeName]),</span><br><span class="line">                                      &#x2F;&#x2F;运营商</span><br><span class="line">                                      @&quot;isp&quot; : KStringIsEmpty([DeviceAndSystemTool wsd_telephonyNetworkInfo]),</span><br><span class="line">                                      &#x2F;&#x2F;定位（省市区）</span><br><span class="line">                                      @&quot;gps&quot; : KStringIsEmpty(self.strLocationInfo)</span><br><span class="line">                                      &#125;;</span><br><span class="line"></span><br><span class="line">                BmobObject *obj1 &#x3D; [BmobObject objectWithoutDataWithClassName:obj.className objectId:obj.objectId];</span><br><span class="line">                &#x2F;&#x2F;设置cheatMode为YES</span><br><span class="line">                [obj1 setObject:dic forKey:@&quot;TrackData&quot;];</span><br><span class="line">                &#x2F;&#x2F;异步更新数据</span><br><span class="line">                [obj1 updateInBackground];</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;];</span><br></pre></td></tr></table></figure>
-
-<h4 id="引用方法："><a href="#引用方法：" class="headerlink" title="引用方法："></a>引用方法：</h4><p>目前没有集成到pod上 只能手动导入 这是相关文件：<a href="https://github.com/NickChenHao/TrackAction.git">GitHub</a></p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">【 使用说明 】</span><br><span class="line"> 1.需要依赖 pod &#39;MJExtension&#39; 和 pod &#39;AFNetworking&#39; 请确保项目中已有</span><br><span class="line"> 2.将文件拖入项目中</span><br><span class="line"> 3.需在pch文件中引用  #import &quot;TrackAction.h&quot;</span><br><span class="line"> 4.需在AppDelegate.m文件中</span><br><span class="line">   a.调用 createTablesNeeded 创建数据库</span><br><span class="line">   b.重写 trackGetUserID     配置userID</span><br><span class="line">   c.重写 trackServiceURL    配置上传服务器的地址</span><br><span class="line"> 5.可添加不需要统计的控制器在BlackListed.plist</span><br></pre></td></tr></table></figure>
-
-<h4 id="更新部分【重要】"><a href="#更新部分【重要】" class="headerlink" title="更新部分【重要】"></a>更新部分【重要】</h4><h5 id="引用方法"><a href="#引用方法" class="headerlink" title="引用方法"></a><del>引用方法</del></h5><ul>
-<li>手动导入 这是相关文件：<a href="https://github.com/NickChenHao/TrackAction.git">GitHub</a></li>
-<li>引用svn私有库 <code>pod &#39;ASTrackAction&#39;,&#39;1.0.0&#39;</code></li>
-</ul>
-<h5 id="使用说明"><a href="#使用说明" class="headerlink" title="使用说明"></a><del>使用说明</del></h5><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">【 使用说明 】</span><br><span class="line"> 1.依赖 pod &#39;MJExtension&#39; 和 pod &#39;AFNetworking&#39;</span><br><span class="line"> 2.需在pch文件中引用  #import &quot;TrackAction.h&quot;</span><br><span class="line"> 3.需在AppDelegate里的方法实现 配置track信息的方法 在LogDAO类中 （不开启埋点功能 注释即可）</span><br></pre></td></tr></table></figure>
-<h5 id="上传的拼接数据"><a href="#上传的拼接数据" class="headerlink" title="上传的拼接数据"></a><del>上传的拼接数据</del></h5><p>修改为<br>1.先判断是开启埋点功能<br>2.再判断是否自定义服务器地址 若有则AFN请求 若无则上传至Bmob后端云</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">    if (!self.isOpenTracker) &#123;</span><br><span class="line">        return;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    NSString *userID &#x3D; @&quot;0&quot;;&#x2F;&#x2F;必须默认0</span><br><span class="line">    if (self.userId.length&gt;0) &#123;</span><br><span class="line">        userID &#x3D; self.userId;</span><br><span class="line">    &#125;</span><br><span class="line">    NSDictionary *dic &#x3D; @&#123;</span><br><span class="line">                          &#x2F;&#x2F;模型数组转成字典数组</span><br><span class="line">                          @&quot;list&quot; : [LogDTO mj_keyValuesArrayWithObjectArray:[[LogDAO sharedInstance] getAllData]],</span><br><span class="line">                          &#x2F;&#x2F;userid</span><br><span class="line">                          @&quot;userid&quot; : KStringIsEmpty(userID),</span><br><span class="line">                          &#x2F;&#x2F;应用名称</span><br><span class="line">                          @&quot;productName&quot; : kDisplayName,</span><br><span class="line">                          &#x2F;&#x2F;bundleId</span><br><span class="line">                          @&quot;productID&quot; : [[NSBundle mainBundle] bundleIdentifier],</span><br><span class="line">                          &#x2F;&#x2F;应用版本号</span><br><span class="line">                          @&quot;version&quot; : kVersion,</span><br><span class="line">                          &#x2F;&#x2F;设备版本</span><br><span class="line">                          @&quot;osVersion&quot; : [NSString stringWithFormat:@&quot;%.1f&quot;,[DeviceAndSystemTool systemVersion]],</span><br><span class="line">                          &#x2F;&#x2F;设备机型</span><br><span class="line">                          @&quot;osDeviceType&quot; : KStringIsEmpty([DeviceAndSystemTool getDeviceName]),</span><br><span class="line">                          &#x2F;&#x2F;网络类型</span><br><span class="line">                          @&quot;networkType&quot; : KStringIsEmpty([DeviceAndSystemTool networkTypeName]),</span><br><span class="line">                          &#x2F;&#x2F;运营商</span><br><span class="line">                          @&quot;isp&quot; : KStringIsEmpty([DeviceAndSystemTool wsd_telephonyNetworkInfo]),</span><br><span class="line">                          &#x2F;&#x2F;定位（省市区）</span><br><span class="line">                          @&quot;gps&quot; : KStringIsEmpty(self.strLocationInfo)</span><br><span class="line">                          &#125;;</span><br><span class="line"></span><br><span class="line">    if (!ISEMPTY(self.serviceURL)) &#123;</span><br><span class="line">#pragma mark - AFN</span><br><span class="line"></span><br><span class="line">        [TrackActionServiceManager postParameter:dic Success:^(NSURLSessionDataTask *operation, id responseObject) &#123;</span><br><span class="line"></span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(YES,nil);</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">        &#125; Failure:^(NSURLSessionDataTask *operation, NSError *error) &#123;</span><br><span class="line"></span><br><span class="line">            if (handler) &#123;</span><br><span class="line">                handler(NO,error);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;];</span><br><span class="line">    &#125;else&#123;</span><br><span class="line"></span><br><span class="line">#pragma mark - 后端云SDK</span><br><span class="line"></span><br><span class="line">        BmobObject *trackBmob &#x3D; [BmobObject objectWithClassName:@&quot;TrackAction&quot;];</span><br><span class="line">        [trackBmob setObject:dic forKey:@&quot;TrackData&quot;];</span><br><span class="line">        [trackBmob setObject:self.userId forKey:@&quot;UserID&quot;];</span><br><span class="line">        [trackBmob saveInBackgroundWithResultBlock:^(BOOL isSuccessful, NSError *error) &#123;</span><br><span class="line">            &#x2F;&#x2F;进行操作</span><br><span class="line">            if (isSuccessful) &#123;</span><br><span class="line">                if (handler) &#123;</span><br><span class="line">                    handler(YES,nil);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;else&#123;</span><br><span class="line">                if (handler) &#123;</span><br><span class="line">                    handler(NO,error);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;];</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
-
-]]></content>
-      <categories>
-        <category>aboutJub</category>
-      </categories>
-      <tags>
-        <tag>iOS</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>swift笔记1</title>
     <url>/2016/01/25/swift/</url>
     <content><![CDATA[<h2 id="Swift最基本的语法变化"><a href="#Swift最基本的语法变化" class="headerlink" title="Swift最基本的语法变化"></a>Swift最基本的语法变化</h2><ul>
@@ -512,6 +512,69 @@
 <figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">let b &#x3D; 0</span><br><span class="line">repeat &#123; </span><br><span class="line">    print(b)</span><br><span class="line">    b++</span><br><span class="line">&#125; while b &lt; 20</span><br></pre></td></tr></table></figure>
 
 
+]]></content>
+      <categories>
+        <category>swift笔记</category>
+      </categories>
+      <tags>
+        <tag>swift</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>swift笔记2</title>
+    <url>/2016/01/26/swift%E7%AC%94%E8%AE%B02/</url>
+    <content><![CDATA[<h3 id="字符串的介绍"><a href="#字符串的介绍" class="headerlink" title="字符串的介绍"></a>字符串的介绍</h3><ul>
+<li><p>字符串在任何的开发中使用都是非常频繁的</p>
+</li>
+<li><p>OC和Swift中字符串的区别</p>
+<ul>
+<li>在OC中字符串类型时NSString,在Swift中字符串类型是String</li>
+<li>OC中字符串@””,Swift中字符串””</li>
+</ul>
+</li>
+<li><p>使用 String 的原因</p>
+<ul>
+<li>String 是一个结构体，性能更高</li>
+<li>NSString 是一个 OC 对象，性能略差</li>
+<li>String 支持直接遍历</li>
+<li>Swift 提供了 String 和 NSString 之间的无缝转换</li>
+</ul>
+<a id="more"></a>
+
+</li>
+</ul>
+<h3 id="字符的定义"><a href="#字符的定义" class="headerlink" title="字符的定义"></a>字符的定义</h3><ul>
+<li><p>定义不可变字符串<br><code>let str = &quot;hello Objective-C&quot;</code></p>
+</li>
+<li><p>定义可变字符串<br><code>var str = &quot;hello Swift&quot;</code></p>
+</li>
+</ul>
+<h3 id="字符串的使用"><a href="#字符串的使用" class="headerlink" title="字符串的使用"></a>字符串的使用</h3><p>获取字符串的长度</p>
+<ul>
+<li><p>获取字符集合,再获取集合的count属性<br><code>let count = str.characters.count</code></p>
+</li>
+<li><p>遍历字符串</p>
+</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">var str &#x3D; &quot;Hello, Swift&quot;</span><br><span class="line">for c in str.characters &#123;</span><br><span class="line">    print(c)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="字符串拼接"><a href="#字符串拼接" class="headerlink" title="字符串拼接"></a>字符串拼接</h3><ul>
+<li>两个字符串的拼接</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">let str1 &#x3D; &quot;Hello&quot;</span><br><span class="line">let str2 &#x3D; &quot;World&quot;</span><br><span class="line">let str3 &#x3D; str1 + str2</span><br></pre></td></tr></table></figure>
+<ul>
+<li>字符串和其他数据类型的拼接</li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">let name &#x3D; &quot;why&quot; </span><br><span class="line">let age &#x3D; 18 </span><br><span class="line">let info &#x3D; &quot;my name is \(name), age is \(age)&quot; </span><br><span class="line">&#96;&#96;&#96; </span><br><span class="line"></span><br><span class="line">- 字符串的格式化</span><br><span class="line"> - 比如时间:03:04</span><br><span class="line"> </span><br></pre></td></tr></table></figure>
+<p>   let min = 3<br>   let second = 4<br>   let time = String(format: “%02d:%02d”, arguments: [min, second])</p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">###字符串的截取</span><br><span class="line"></span><br><span class="line">- Swift中提供了特殊的截取方式</span><br><span class="line"> - 该方式非常麻烦</span><br><span class="line"> - Index创建较为麻烦</span><br><span class="line">- 简单的方式是将String转成NSString来使用</span><br><span class="line"> - 在标识符后加:as NSString即可</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>let myStr = “<a href="http://www.520it.com&quot;/">www.520it.com&quot;</a><br>var subStr = (myStr as NSString).substringFromIndex(4)<br>subStr = (myStr as NSString).substringToIndex(3)<br>subStr = (myStr as NSString).substringWithRange(NSRange(location: 4, length: 5))</p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">- swift截取方式</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>// 1.定义字符串<br>let str = “<a href="http://www.520it.com&quot;/">www.520it.com&quot;</a></p>
+<p>// 2.截取开始位置<br>let fromIndex = str.startIndex.advancedBy(3)<br>let header = str.substringFromIndex(fromIndex)</p>
+<p>// 3.截取结束位置<br>let toIndex = str.endIndex.advancedBy(-3)<br>let footer = str.substringToIndex(toIndex)</p>
+<p>// 4.截取中间的字符串<br>let range = Range(start: str.startIndex.advancedBy(4), end: str.endIndex.advancedBy(-4))<br>let middle = str.substringWithRange(range)</p>
+<pre><code></code></pre>
 ]]></content>
       <categories>
         <category>swift笔记</category>
@@ -633,79 +696,6 @@
       </tags>
   </entry>
   <entry>
-    <title>原生集成code-push热更新RN功能</title>
-    <url>/2019/12/03/%E5%8E%9F%E7%94%9F%E9%9B%86%E6%88%90codePush%E7%83%AD%E6%9B%B4%E6%96%B0RN%E5%8A%9F%E8%83%BD/</url>
-    <content><![CDATA[<h3 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h3><p>code-push是一个微软开发的云服务器。通过它，开发者可以直接在用户的设备上部署手机应用更新。code-push相当于一个中心仓库，开发者可以推送当前的更新（包括JS/HTML/CSS/IMAGE等）到code-push，然后应用将会查询是否有更新。<br>虽然苹果禁了很多热更新，但是，code-push 还是可以用的。项目是 ReactNative 的，总结了下 iOS 的 code-push 的使用方法。</p>
-<h3 id="参考文章"><a href="#参考文章" class="headerlink" title="参考文章"></a>参考文章</h3><p><a href="https://www.jianshu.com/p/6a5e00d22723">code-push热更新详细接入教程</a><br><a href="https://www.jianshu.com/p/6bbb8020c29e">code-push热更新配置（命令整理）</a></p>
-<a id="more"></a>
-
-<h3 id="步骤"><a href="#步骤" class="headerlink" title="步骤"></a>步骤</h3><h4 id="安装code-push-cli"><a href="#安装code-push-cli" class="headerlink" title="安装code-push-cli"></a>安装code-push-cli</h4><p>安装code-push指令，直接在终端上输入如下命令即可，注意：这个code-push指令只需要全局安装一次即可，如果第一次安装成功了，那后面就不在需要安装<br><code>npm install -g code-push-cli</code></p>
-<h4 id="注册code-push账号"><a href="#注册code-push账号" class="headerlink" title="注册code-push账号"></a>注册code-push账号</h4><ul>
-<li>注册code-push账号也很简单，同样是只需简单的执行下面的命令，同样这个注册操作也是全局只需要注册一次即可<code>code-push register</code></li>
-<li>当执行完上面的命令后，会自动打开一个授权网页，让你选择使用哪种方式进行授权登录，这里我们统一就选择使用GitHub即可</li>
-<li>当注册成功后，code-push会给我们一个key</li>
-<li>我们直接复制这个key，然后在终端中将这个key填写进去即可</li>
-<li>验证是否登录成功 <code>code-push login</code></li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">code-push注册登录相关命令：</span><br><span class="line">	•	code-push login 登陆</span><br><span class="line">	•	code-push loout 注销</span><br><span class="line">	•	code-push access-key ls 列出登陆的token</span><br><span class="line">	•	code-push access-key rm &lt;accessKye&gt; 删除某个 access-key</span><br></pre></td></tr></table></figure>
-<h4 id="在code-push服务器注册App"><a href="#在code-push服务器注册App" class="headerlink" title="在code-push服务器注册App"></a>在code-push服务器注册App</h4><p><code> code-push app add 项目名称 ios react-native</code><br>可以查看添加的App列表<br><code>code-push app list</code></p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">code-push管理App的相关命令：</span><br><span class="line">	•	code-push app add 在账号里面添加一个新的app</span><br><span class="line">	•	code-push app remove 或者 rm 在账号里移除一个app</span><br><span class="line">	•	code-push app rename 重命名一个存在app</span><br><span class="line">	•	code-push app list 或则 ls 列出账号下面的所有app</span><br><span class="line">	•	code-push app transfer 把app的所有权转移到另外一个账号</span><br></pre></td></tr></table></figure>
-
-<h4 id="RN代码中集成code-push-不熟悉先省略"><a href="#RN代码中集成code-push-不熟悉先省略" class="headerlink" title="RN代码中集成code-push (不熟悉先省略)"></a>RN代码中集成code-push (不熟悉先省略)</h4><h4 id="原生应用中配置code-push"><a href="#原生应用中配置code-push" class="headerlink" title="原生应用中配置code-push"></a>原生应用中配置code-push</h4><ul>
-<li>使用Xcode打开项目，Xcode的项目导航视图中的PROJECT下选择你的项目，选择Info页签 ，在Configurations节点下单击 + 按钮 ，选择Duplicate “Release Configaration，输入Staging</li>
-</ul>
-<p><img src="https://upload-images.jianshu.io/upload_images/6342050-fbfc9b79199d4a3f..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
-<ul>
-<li>选择Build Settings tab，搜索Build Location -&gt; Per-configuration Build Products Path -&gt; Staging，将之前的值：<code>$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)</code> 改为：<code>$(BUILD_DIR)/Release$(EFFECTIVE_PLATFORM_NAME)</code></li>
-</ul>
-<p><img src="https://upload-images.jianshu.io/upload_images/6342050-369c31244b0f528f..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
-<ul>
-<li>选择Build Settings tab，点击 + 号，选择Add User-Defined Setting，将key设置为<code>CODEPUSH_KEY</code>，Release 和 Staging的值为前面创建的key，我们直接复制进去即可</li>
-</ul>
-<p><img src="https://upload-images.jianshu.io/upload_images/6342050-663dc2df47438cc5..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
-<ul>
-<li>•    打开Info.plist文件，在<code>CodePushDeploymentKey</code>中输入<code>$(CODEPUSH_KEY)</code>，并修改<code>Bundle versions string,short</code>为三位</li>
-</ul>
-<p><img src="https://upload-images.jianshu.io/upload_images/6342050-c4392091edc647a0..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
-<h4 id="打包RN离线的jsbundle"><a href="#打包RN离线的jsbundle" class="headerlink" title="打包RN离线的jsbundle"></a>打包RN离线的jsbundle</h4><ol>
-<li><p>在package.json根目录创建文件夹relseae_ios， 执行如下命令打包成index.bundle<br><code>react-native bundle --entry-file index.js --platform ios --dev false --bundle-output relseae_ios/index.bundle --assets-dest relseae_ios</code></p>
-</li>
-<li><p>将index.bundle拷贝到当前目录<br><code>cp ./relseae_ios/index.bundle ./</code></p>
-</li>
-<li><p>开启本地服务，生成jsbundle<br>在根目录执行npm start<br>Ctrl+T 开启新窗口（确保在pakage.json根目录）<br>执行命令  <code>curl &#39;http://localhost:8081/index.bundle?dev=false&amp;minify=true&amp;platform=ios&#39; -o main.jsbundle</code></p>
-</li>
-<li><p>将main.jsbundle复制到relseae_ios目录下<br><code>cp ./main.jsbundle ./relseae_ios</code></p>
-</li>
-<li><p>将根目录里的<code>main.jsbundle</code>和<code>relseae_ios目录下的资源文件</code>拖拽至工程下 </p>
-</li>
-<li><p>设置Bundle离线包路径<br><code>jsCodeLocation = [[NSBundle mainBundle] URLForResource:@&quot;main&quot; withExtension:@&quot;jsbundle&quot;];</code></p>
-</li>
-</ol>
-<p><strong>更新</strong><br>现将第1-5步骤合并成两步<br>1.在package.json根目录创建文件夹relseae_ios， 执行如下命令打包成index.bundle <code>react-native bundle --entry-file index.js --platform ios --dev false --bundle-output relseae_ios/main.jsbundle --assets-dest relseae_ios</code><br>2.将relseae_ios中的main.jsbundle和asset copy真实文件夹到项目目录 <strong>(统一放在目录指定位置)</strong></p>
-<h4 id="发布RN更新jsbundle版本"><a href="#发布RN更新jsbundle版本" class="headerlink" title="发布RN更新jsbundle版本"></a>发布RN更新jsbundle版本</h4><ul>
-<li><p>原生AppDelegete里需要配置<br><code>jsCodeLocation = [CodePush bundleURL]; </code></p>
-</li>
-<li><p>更新jsbundle 要用以下命令 在项目根目录里<br><code>code-push release NuocityTest ./relseae_ios/ 2.1.4 --des &quot;备注” --m true —-d Production</code></p>
-</li>
-</ul>
-<p><strong>注：</strong><br>强制更新 –m true<br>生产环境 –d Production </p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">项目名称    NuocityTest    </span><br><span class="line">文件路径    .&#x2F;relseae_ios&#x2F;  </span><br><span class="line">项目版本号  2.1.4           </span><br><span class="line">更新描述    &quot;备注”     </span><br></pre></td></tr></table></figure>
-<ul>
-<li>查看更新情况</li>
-</ul>
-<p>生成环境 <code>code-push deployment history 项目名称 Production</code><br>开发环境 <code>code-push deployment history 项目名称 Staging</code><br>或者 <code>code-push deployment ls 项目名称</code></p>
-<p><strong>更新</strong><br>命令行 –m 和 –d 改为 -m 和 -d 否则会上传不成功</p>
-<p>查看app列表<br>code-push app list<br>查看app部署<br>code-push deployment ls NuocityTest</p>
-]]></content>
-      <categories>
-        <category>aboutJub</category>
-      </categories>
-      <tags>
-        <tag>RN</tag>
-        <tag>code-push</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>tableView的性能优化</title>
     <url>/2016/06/02/tableView%E7%9A%84%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/</url>
     <content><![CDATA[<h3 id="tableView性能优化"><a href="#tableView性能优化" class="headerlink" title="tableView性能优化"></a>tableView性能优化</h3><p>tableview的优化一直是一个很考验基本功的活儿，之前做项目的适合被这个问题困扰了很久，通过性能工具、查阅文档解决，整理思路和解决方案如下：</p>
@@ -775,69 +765,6 @@
       </categories>
       <tags>
         <tag>iOS</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>swift笔记2</title>
-    <url>/2016/01/26/swift%E7%AC%94%E8%AE%B02/</url>
-    <content><![CDATA[<h3 id="字符串的介绍"><a href="#字符串的介绍" class="headerlink" title="字符串的介绍"></a>字符串的介绍</h3><ul>
-<li><p>字符串在任何的开发中使用都是非常频繁的</p>
-</li>
-<li><p>OC和Swift中字符串的区别</p>
-<ul>
-<li>在OC中字符串类型时NSString,在Swift中字符串类型是String</li>
-<li>OC中字符串@””,Swift中字符串””</li>
-</ul>
-</li>
-<li><p>使用 String 的原因</p>
-<ul>
-<li>String 是一个结构体，性能更高</li>
-<li>NSString 是一个 OC 对象，性能略差</li>
-<li>String 支持直接遍历</li>
-<li>Swift 提供了 String 和 NSString 之间的无缝转换</li>
-</ul>
-<a id="more"></a>
-
-</li>
-</ul>
-<h3 id="字符的定义"><a href="#字符的定义" class="headerlink" title="字符的定义"></a>字符的定义</h3><ul>
-<li><p>定义不可变字符串<br><code>let str = &quot;hello Objective-C&quot;</code></p>
-</li>
-<li><p>定义可变字符串<br><code>var str = &quot;hello Swift&quot;</code></p>
-</li>
-</ul>
-<h3 id="字符串的使用"><a href="#字符串的使用" class="headerlink" title="字符串的使用"></a>字符串的使用</h3><p>获取字符串的长度</p>
-<ul>
-<li><p>获取字符集合,再获取集合的count属性<br><code>let count = str.characters.count</code></p>
-</li>
-<li><p>遍历字符串</p>
-</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">var str &#x3D; &quot;Hello, Swift&quot;</span><br><span class="line">for c in str.characters &#123;</span><br><span class="line">    print(c)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<h3 id="字符串拼接"><a href="#字符串拼接" class="headerlink" title="字符串拼接"></a>字符串拼接</h3><ul>
-<li>两个字符串的拼接</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">let str1 &#x3D; &quot;Hello&quot;</span><br><span class="line">let str2 &#x3D; &quot;World&quot;</span><br><span class="line">let str3 &#x3D; str1 + str2</span><br></pre></td></tr></table></figure>
-<ul>
-<li>字符串和其他数据类型的拼接</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">let name &#x3D; &quot;why&quot; </span><br><span class="line">let age &#x3D; 18 </span><br><span class="line">let info &#x3D; &quot;my name is \(name), age is \(age)&quot; </span><br><span class="line">&#96;&#96;&#96; </span><br><span class="line"></span><br><span class="line">- 字符串的格式化</span><br><span class="line"> - 比如时间:03:04</span><br><span class="line"> </span><br></pre></td></tr></table></figure>
-<p>   let min = 3<br>   let second = 4<br>   let time = String(format: “%02d:%02d”, arguments: [min, second])</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">###字符串的截取</span><br><span class="line"></span><br><span class="line">- Swift中提供了特殊的截取方式</span><br><span class="line"> - 该方式非常麻烦</span><br><span class="line"> - Index创建较为麻烦</span><br><span class="line">- 简单的方式是将String转成NSString来使用</span><br><span class="line"> - 在标识符后加:as NSString即可</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>let myStr = “<a href="http://www.520it.com&quot;/">www.520it.com&quot;</a><br>var subStr = (myStr as NSString).substringFromIndex(4)<br>subStr = (myStr as NSString).substringToIndex(3)<br>subStr = (myStr as NSString).substringWithRange(NSRange(location: 4, length: 5))</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">- swift截取方式</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>// 1.定义字符串<br>let str = “<a href="http://www.520it.com&quot;/">www.520it.com&quot;</a></p>
-<p>// 2.截取开始位置<br>let fromIndex = str.startIndex.advancedBy(3)<br>let header = str.substringFromIndex(fromIndex)</p>
-<p>// 3.截取结束位置<br>let toIndex = str.endIndex.advancedBy(-3)<br>let footer = str.substringToIndex(toIndex)</p>
-<p>// 4.截取中间的字符串<br>let range = Range(start: str.startIndex.advancedBy(4), end: str.endIndex.advancedBy(-4))<br>let middle = str.substringWithRange(range)</p>
-<pre><code></code></pre>
-]]></content>
-      <categories>
-        <category>swift笔记</category>
-      </categories>
-      <tags>
-        <tag>swift</tag>
       </tags>
   </entry>
   <entry>
@@ -1137,6 +1064,79 @@ ex:DES和3DES的分组长度都是64比特。即每次只能加密64比特的明
       </categories>
       <tags>
         <tag>iOS</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>原生集成code-push热更新RN功能</title>
+    <url>/2019/12/03/%E5%8E%9F%E7%94%9F%E9%9B%86%E6%88%90codePush%E7%83%AD%E6%9B%B4%E6%96%B0RN%E5%8A%9F%E8%83%BD/</url>
+    <content><![CDATA[<h3 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h3><p>code-push是一个微软开发的云服务器。通过它，开发者可以直接在用户的设备上部署手机应用更新。code-push相当于一个中心仓库，开发者可以推送当前的更新（包括JS/HTML/CSS/IMAGE等）到code-push，然后应用将会查询是否有更新。<br>虽然苹果禁了很多热更新，但是，code-push 还是可以用的。项目是 ReactNative 的，总结了下 iOS 的 code-push 的使用方法。</p>
+<h3 id="参考文章"><a href="#参考文章" class="headerlink" title="参考文章"></a>参考文章</h3><p><a href="https://www.jianshu.com/p/6a5e00d22723">code-push热更新详细接入教程</a><br><a href="https://www.jianshu.com/p/6bbb8020c29e">code-push热更新配置（命令整理）</a></p>
+<a id="more"></a>
+
+<h3 id="步骤"><a href="#步骤" class="headerlink" title="步骤"></a>步骤</h3><h4 id="安装code-push-cli"><a href="#安装code-push-cli" class="headerlink" title="安装code-push-cli"></a>安装code-push-cli</h4><p>安装code-push指令，直接在终端上输入如下命令即可，注意：这个code-push指令只需要全局安装一次即可，如果第一次安装成功了，那后面就不在需要安装<br><code>npm install -g code-push-cli</code></p>
+<h4 id="注册code-push账号"><a href="#注册code-push账号" class="headerlink" title="注册code-push账号"></a>注册code-push账号</h4><ul>
+<li>注册code-push账号也很简单，同样是只需简单的执行下面的命令，同样这个注册操作也是全局只需要注册一次即可<code>code-push register</code></li>
+<li>当执行完上面的命令后，会自动打开一个授权网页，让你选择使用哪种方式进行授权登录，这里我们统一就选择使用GitHub即可</li>
+<li>当注册成功后，code-push会给我们一个key</li>
+<li>我们直接复制这个key，然后在终端中将这个key填写进去即可</li>
+<li>验证是否登录成功 <code>code-push login</code></li>
+</ul>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">code-push注册登录相关命令：</span><br><span class="line">	•	code-push login 登陆</span><br><span class="line">	•	code-push loout 注销</span><br><span class="line">	•	code-push access-key ls 列出登陆的token</span><br><span class="line">	•	code-push access-key rm &lt;accessKye&gt; 删除某个 access-key</span><br></pre></td></tr></table></figure>
+<h4 id="在code-push服务器注册App"><a href="#在code-push服务器注册App" class="headerlink" title="在code-push服务器注册App"></a>在code-push服务器注册App</h4><p><code> code-push app add 项目名称 ios react-native</code><br>可以查看添加的App列表<br><code>code-push app list</code></p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">code-push管理App的相关命令：</span><br><span class="line">	•	code-push app add 在账号里面添加一个新的app</span><br><span class="line">	•	code-push app remove 或者 rm 在账号里移除一个app</span><br><span class="line">	•	code-push app rename 重命名一个存在app</span><br><span class="line">	•	code-push app list 或则 ls 列出账号下面的所有app</span><br><span class="line">	•	code-push app transfer 把app的所有权转移到另外一个账号</span><br></pre></td></tr></table></figure>
+
+<h4 id="RN代码中集成code-push-不熟悉先省略"><a href="#RN代码中集成code-push-不熟悉先省略" class="headerlink" title="RN代码中集成code-push (不熟悉先省略)"></a>RN代码中集成code-push (不熟悉先省略)</h4><h4 id="原生应用中配置code-push"><a href="#原生应用中配置code-push" class="headerlink" title="原生应用中配置code-push"></a>原生应用中配置code-push</h4><ul>
+<li>使用Xcode打开项目，Xcode的项目导航视图中的PROJECT下选择你的项目，选择Info页签 ，在Configurations节点下单击 + 按钮 ，选择Duplicate “Release Configaration，输入Staging</li>
+</ul>
+<p><img src="https://upload-images.jianshu.io/upload_images/6342050-fbfc9b79199d4a3f..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
+<ul>
+<li>选择Build Settings tab，搜索Build Location -&gt; Per-configuration Build Products Path -&gt; Staging，将之前的值：<code>$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)</code> 改为：<code>$(BUILD_DIR)/Release$(EFFECTIVE_PLATFORM_NAME)</code></li>
+</ul>
+<p><img src="https://upload-images.jianshu.io/upload_images/6342050-369c31244b0f528f..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
+<ul>
+<li>选择Build Settings tab，点击 + 号，选择Add User-Defined Setting，将key设置为<code>CODEPUSH_KEY</code>，Release 和 Staging的值为前面创建的key，我们直接复制进去即可</li>
+</ul>
+<p><img src="https://upload-images.jianshu.io/upload_images/6342050-663dc2df47438cc5..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
+<ul>
+<li>•    打开Info.plist文件，在<code>CodePushDeploymentKey</code>中输入<code>$(CODEPUSH_KEY)</code>，并修改<code>Bundle versions string,short</code>为三位</li>
+</ul>
+<p><img src="https://upload-images.jianshu.io/upload_images/6342050-c4392091edc647a0..jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1200/format/webp" alt="avatar"></p>
+<h4 id="打包RN离线的jsbundle"><a href="#打包RN离线的jsbundle" class="headerlink" title="打包RN离线的jsbundle"></a>打包RN离线的jsbundle</h4><ol>
+<li><p>在package.json根目录创建文件夹relseae_ios， 执行如下命令打包成index.bundle<br><code>react-native bundle --entry-file index.js --platform ios --dev false --bundle-output relseae_ios/index.bundle --assets-dest relseae_ios</code></p>
+</li>
+<li><p>将index.bundle拷贝到当前目录<br><code>cp ./relseae_ios/index.bundle ./</code></p>
+</li>
+<li><p>开启本地服务，生成jsbundle<br>在根目录执行npm start<br>Ctrl+T 开启新窗口（确保在pakage.json根目录）<br>执行命令  <code>curl &#39;http://localhost:8081/index.bundle?dev=false&amp;minify=true&amp;platform=ios&#39; -o main.jsbundle</code></p>
+</li>
+<li><p>将main.jsbundle复制到relseae_ios目录下<br><code>cp ./main.jsbundle ./relseae_ios</code></p>
+</li>
+<li><p>将根目录里的<code>main.jsbundle</code>和<code>relseae_ios目录下的资源文件</code>拖拽至工程下 </p>
+</li>
+<li><p>设置Bundle离线包路径<br><code>jsCodeLocation = [[NSBundle mainBundle] URLForResource:@&quot;main&quot; withExtension:@&quot;jsbundle&quot;];</code></p>
+</li>
+</ol>
+<p><strong>更新</strong><br>现将第1-5步骤合并成两步<br>1.在package.json根目录创建文件夹relseae_ios， 执行如下命令打包成index.bundle <code>react-native bundle --entry-file index.js --platform ios --dev false --bundle-output relseae_ios/main.jsbundle --assets-dest relseae_ios</code><br>2.将relseae_ios中的main.jsbundle和asset copy真实文件夹到项目目录 <strong>(统一放在目录指定位置)</strong></p>
+<h4 id="发布RN更新jsbundle版本"><a href="#发布RN更新jsbundle版本" class="headerlink" title="发布RN更新jsbundle版本"></a>发布RN更新jsbundle版本</h4><ul>
+<li><p>原生AppDelegete里需要配置<br><code>jsCodeLocation = [CodePush bundleURL]; </code></p>
+</li>
+<li><p>更新jsbundle 要用以下命令 在项目根目录里<br><code>code-push release NuocityTest ./relseae_ios/ 2.1.4 --des &quot;备注” --m true —-d Production</code></p>
+</li>
+</ul>
+<p><strong>注：</strong><br>强制更新 –m true<br>生产环境 –d Production </p>
+<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">项目名称    NuocityTest    </span><br><span class="line">文件路径    .&#x2F;relseae_ios&#x2F;  </span><br><span class="line">项目版本号  2.1.4           </span><br><span class="line">更新描述    &quot;备注”     </span><br></pre></td></tr></table></figure>
+<ul>
+<li>查看更新情况</li>
+</ul>
+<p>生成环境 <code>code-push deployment history 项目名称 Production</code><br>开发环境 <code>code-push deployment history 项目名称 Staging</code><br>或者 <code>code-push deployment ls 项目名称</code></p>
+<p><strong>更新</strong><br>命令行 –m 和 –d 改为 -m 和 -d 否则会上传不成功</p>
+<p>查看app列表<br>code-push app list<br>查看app部署<br>code-push deployment ls NuocityTest</p>
+]]></content>
+      <categories>
+        <category>aboutJub</category>
+      </categories>
+      <tags>
+        <tag>RN</tag>
+        <tag>code-push</tag>
       </tags>
   </entry>
   <entry>
