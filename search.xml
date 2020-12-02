@@ -975,7 +975,9 @@
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/3.png"></p>
 <p>只好在往里一层,看看 dataTaskWithHTTPMethod 上有什么操作没有</p>
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/4.png"></p>
-<p>发现dataTask也没有持有success,failure , 只是当成一个普通的block,然后调用了这个block而已.   <br> <br>综上, self并没有强引用 AFHTTPSessionManager * manager , manager只是一个局部变量, 在函数调用栈结束的时候被系统回收.<br>manager也没有持有block,把block当做一个形参使用, 虽然block中持有了self,但是没有形成循环, block执行完成了,block也随之释放了. 所有的变量都被合适的释放了.</p>
+<p>发现dataTask也没有持有success,failure , 只是当成一个普通的block,然后调用了这个block而已.   <br>self并没有强引用 AFHTTPSessionManager * manager , manager只是一个局部变量, 在函数调用栈结束的时候被系统回收.<br>manager也没有持有block,把block当做一个形参使用, 虽然block中持有了self,但是没有形成循环, block执行完成了,block也随之释放了. 所有的变量都被合适的释放了.</p>
+<hr>
+<p>关键点在dataTaskWithRequest内部会创建一个NSURLSessionDataTask类型的dataTask，然后调用addDelegateForDataTask方法时将dataTask和completionHandler这个block传进去，最终dataTask和completionHandler被AFURLSessionManagerTaskDelegate代理对象引用，<br>而AFURLSessionManagerTaskDelegate被mutableTaskDelegatesKeyedByTaskIdentifier字典强引用，在completionHandler执行完后，mutableTaskDelegatesKeyedByTaskIdentifier字典会移除AFURLSessionManagerTaskDelegate对象，这样completionHandler也被释放了，所以外界在AFN的completionHandler中使用self等也不会产生循环引用。<br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/8.png"><br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/9.png"><br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/10.png"></p>
 <hr>
 <h3 id="Masonry为什么不会造成循环引用？"><a href="#Masonry为什么不会造成循环引用？" class="headerlink" title="Masonry为什么不会造成循环引用？"></a>Masonry为什么不会造成循环引用？</h3><p>我们再看看Masonry 这个框架, 最常用的就是</p>
 <figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">[imageView mas_makeConstraints:^(MASConstraintMaker *make) &#123;</span><br><span class="line"></span><br><span class="line">&#125;];</span><br></pre></td></tr></table></figure>
