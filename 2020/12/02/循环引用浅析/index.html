@@ -75,7 +75,7 @@
 
 
 
-  <meta name="keywords" content="循环引用,">
+  <meta name="keywords" content="block,">
 
 
 
@@ -87,7 +87,7 @@
 
 
 <meta name="description" content="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?其实只要抓住循环引用的本质。所谓循环引用，就是A-&amp;gt;B, 同时B-&amp;gt;A, 或者复杂一点的, A-&amp;gt;B-&amp;gt;C, C-&amp;gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。 关于这个问题，UIView和AFN还是不一样的。">
-<meta name="keywords" content="循环引用">
+<meta name="keywords" content="block">
 <meta property="og:type" content="article">
 <meta property="og:title" content="循环引用浅析">
 <meta property="og:url" content="http://nickchenhao.github.io./2020/12/02/循环引用浅析/index.html">
@@ -101,7 +101,7 @@
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/5.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/6.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/7.png">
-<meta property="og:updated_time" content="2020-12-02T10:11:27.557Z">
+<meta property="og:updated_time" content="2020-12-02T10:13:36.806Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="循环引用浅析">
 <meta name="twitter:description" content="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?其实只要抓住循环引用的本质。所谓循环引用，就是A-&amp;gt;B, 同时B-&amp;gt;A, 或者复杂一点的, A-&amp;gt;B-&amp;gt;C, C-&amp;gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。 关于这个问题，UIView和AFN还是不一样的。">
@@ -352,6 +352,28 @@
           </span>
 
           
+            <span class="post-category">
+            
+              <span class="post-meta-divider">|</span>
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-folder-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">分类于</span>
+              
+              
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/循环引用/" itemprop="url" rel="index">
+                    <span itemprop="name">循环引用</span>
+                  </a>
+                </span>
+
+                
+                
+              
+            </span>
+          
 
           
             
@@ -469,7 +491,7 @@
       
         <div class="post-tags">
           
-            <a href="/tags/循环引用/" rel="tag"><i class="fa fa-tag"></i> 循环引用</a>
+            <a href="/tags/block/" rel="tag"><i class="fa fa-tag"></i> block</a>
           
         </div>
       
@@ -586,7 +608,7 @@
               
               <div class="site-state-item site-state-categories">
                 <a href="/categories/index.html">
-                  <span class="site-state-item-count">6</span>
+                  <span class="site-state-item-count">7</span>
                   <span class="site-state-item-name">分类</span>
                 </a>
               </div>
@@ -597,7 +619,7 @@
               
               <div class="site-state-item site-state-tags">
                 <a href="/tags/index.html">
-                  <span class="site-state-item-count">13</span>
+                  <span class="site-state-item-count">14</span>
                   <span class="site-state-item-name">标签</span>
                 </a>
               </div>

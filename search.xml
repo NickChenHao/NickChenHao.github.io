@@ -988,8 +988,11 @@
 <h3 id="block-为什么用copy"><a href="#block-为什么用copy" class="headerlink" title="block 为什么用copy?"></a>block 为什么用copy?</h3><p>一共存在3种类型的block, <code>__NSStackBlock__(栈区block), __NSMallocBlock__(堆区block), __NSGlobalBlock__(全局区)</code>,<br>在MRC下，block是存在栈中，出了函数调用栈就会被回收，copy之后, block放在堆中了, 在作用域之外也可以安全的自由调用。<br>在ARC下, 赋值给某个变量(局部变量,全局变量都可以)后, 系统会自动的copy一次. 在ARC下, 使用copy与strong是一样的, 因为block的retain就是用copy来实现的.</p>
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/7.png"></p>
 ]]></content>
+      <categories>
+        <category>循环引用</category>
+      </categories>
       <tags>
-        <tag>循环引用</tag>
+        <tag>block</tag>
       </tags>
   </entry>
   <entry>
