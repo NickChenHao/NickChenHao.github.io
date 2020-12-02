@@ -101,7 +101,7 @@
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/5.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/6.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/7.png">
-<meta property="og:updated_time" content="2020-12-02T10:08:14.354Z">
+<meta property="og:updated_time" content="2020-12-02T10:11:27.557Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="循环引用浅析">
 <meta name="twitter:description" content="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?其实只要抓住循环引用的本质。所谓循环引用，就是A-&amp;gt;B, 同时B-&amp;gt;A, 或者复杂一点的, A-&amp;gt;B-&amp;gt;C, C-&amp;gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。 关于这个问题，UIView和AFN还是不一样的。">
@@ -391,10 +391,7 @@
       
         <h3 id="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用"><a href="#为什么系统的block，AFN网络请求的block内使用self不会造成循环引用" class="headerlink" title="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?"></a>为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?</h3><p>其实只要抓住循环引用的本质。所谓循环引用，就是A-&gt;B, 同时B-&gt;A, 或者复杂一点的, A-&gt;B-&gt;C, C-&gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。<br> <br>关于这个问题，UIView和AFN还是不一样的。</p>
 <a id="more"></a>
-
-<p>首先循环引用发生的条件就是持有这个block的对象，被block里边加入的对象持有。当然是强引用。</p>
-<p>所以UIView的动画block不会造成循环引用的原因就是，这是个类方法，当前控制器不可能强引用一个类，所以循环无法形成。<br> <br>UIView中的block持有当前控制器,但是当前控制器中是没有持有UIView类的,没有形成循环. 当动画结束时,UIView会结束持有这个block,如果没有别的对象持有block的话,block对象就会被释放掉,从而block会释放掉对self的持有,整个内存引用关系被解除.
- </p>
+<p>首先循环引用发生的条件就是持有这个block的对象，被block里边加入的对象持有。当然是强引用。<br>所以UIView的动画block不会造成循环引用的原因就是，这是个类方法，当前控制器不可能强引用一个类，所以循环无法形成。<br>UIView中的block持有当前控制器,但是当前控制器中是没有持有UIView类的,没有形成循环. 当动画结束时,UIView会结束持有这个block,如果没有别的对象持有block的话,block对象就会被释放掉,从而block会释放掉对self的持有,整个内存引用关系被解除.</p>
 <p>同样的, 我们也没有持有dispatch_after,所以在dispatch_after里面使用self是安全的.</p>
 <hr>
 <p>AFNetworking是因为人家大神自己封装了一个completionBlock，不管你传进来是啥，都给你把循环引用打破。<br>这是较低版本的,AF3.0以上的好像没这个了 . <br>AFURLConnectionOperation 里的一个请求结束之后，setCompleteBlock会把block设置为nil，来打破循环引用 .<br>看图：</p>
