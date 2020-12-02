@@ -383,7 +383,7 @@
 
       
         
-          <h3 id="1、为什么系统的block，AFN网络请求的block内使用self不会造成循环引用"><a href="#1、为什么系统的block，AFN网络请求的block内使用self不会造成循环引用" class="headerlink" title="1、为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?"></a>1、为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?</h3><p>其实只要抓住循环引用的本质。所谓循环引用，就是A-&gt;B, 同时B-&gt;A, 或者复杂一点的, A-&gt;B-&gt;C, C-&gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。<br> <br>关于这个问题，UIView和AFN还是不一样的。</p>
+          <h3 id="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用"><a href="#为什么系统的block，AFN网络请求的block内使用self不会造成循环引用" class="headerlink" title="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?"></a>为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?</h3><p>其实只要抓住循环引用的本质。所谓循环引用，就是A-&gt;B, 同时B-&gt;A, 或者复杂一点的, A-&gt;B-&gt;C, C-&gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。<br> <br>关于这个问题，UIView和AFN还是不一样的。</p>
           <!--noindex-->
           <div class="post-button text-center">
             <a class="btn" href="/2020/12/02/循环引用浅析/#more" rel="contents">
