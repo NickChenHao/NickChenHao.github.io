@@ -101,7 +101,7 @@
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/5.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/6.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/7.png">
-<meta property="og:updated_time" content="2020-12-02T10:01:50.973Z">
+<meta property="og:updated_time" content="2020-12-02T10:05:22.723Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="循环引用浅析">
 <meta name="twitter:description" content="1、为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?其实只要抓住循环引用的本质。所谓循环引用，就是A-&amp;gt;B, 同时B-&amp;gt;A, 或者复杂一点的, A-&amp;gt;B-&amp;gt;C, C-&amp;gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。 关于这个问题，UIView和AFN还是不一样的。">
@@ -396,7 +396,8 @@
 <p>所以UIView的动画block不会造成循环引用的原因就是，这是个类方法，当前控制器不可能强引用一个类，所以循环无法形成。<br> <br>UIView中的block持有当前控制器,但是当前控制器中是没有持有UIView类的,没有形成循环. 当动画结束时,UIView会结束持有这个block,如果没有别的对象持有block的话,block对象就会被释放掉,从而block会释放掉对self的持有,整个内存引用关系被解除.
  </p>
 <p>同样的, 我们也没有持有dispatch_after,所以在dispatch_after里面使用self是安全的.</p>
-<p>-<br>AFNetworking是因为人家大神自己封装了一个completionBlock，不管你传进来是啥，都给你把循环引用打破。<br>这是较低版本的,AF3.0以上的好像没这个了 . <br>AFURLConnectionOperation 里的一个请求结束之后，setCompleteBlock会把block设置为nil，来打破循环引用 .<br>看图：</p>
+<hr>
+<p>AFNetworking是因为人家大神自己封装了一个completionBlock，不管你传进来是啥，都给你把循环引用打破。<br>这是较低版本的,AF3.0以上的好像没这个了 . <br>AFURLConnectionOperation 里的一个请求结束之后，setCompleteBlock会把block设置为nil，来打破循环引用 .<br>看图：</p>
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/1.jpeg"></p>
 <p>3.0之后,以一个最简单的调用为例,</p>
 <figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">AFHTTPSessionManager * manager = [AFHTTPSessionManager manager];</span><br><span class="line">[manager POST:urlStr parameters:parm progress:nil success:^(NSURLSessionDataTask * _Nonnull task, NSDictionary *  _Nullable responseObject) &#123;</span><br><span class="line"></span><br><span class="line">&#125; failure:^(NSURLSessionDataTask * _Nullable task, NSError * _Nonnull error) &#123;</span><br><span class="line"></span><br><span class="line">&#125;];</span><br></pre></td></tr></table></figure>
@@ -407,7 +408,7 @@
 <p>只好在往里一层,看看 dataTaskWithHTTPMethod 上有什么操作没有</p>
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/4.png"></p>
 <p>发现dataTask也没有持有success,failure , 只是当成一个普通的block,然后调用了这个block而已.   <br> <br>综上, self并没有强引用 AFHTTPSessionManager * manager , manager只是一个局部变量, 在函数调用栈结束的时候被系统回收.<br>manager也没有持有block,把block当做一个形参使用, 虽然block中持有了self,但是没有形成循环, block执行完成了,block也随之释放了. 所有的变量都被合适的释放了.</p>
-<p>-</p>
+<hr>
 <h3 id="2、Masonry为什么不会造成循环引用？"><a href="#2、Masonry为什么不会造成循环引用？" class="headerlink" title="2、Masonry为什么不会造成循环引用？"></a>2、Masonry为什么不会造成循环引用？</h3><p>我们再看看Masonry 这个框架, 最常用的就是</p>
 <figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">[imageView mas_makeConstraints:^(MASConstraintMaker *make) &#123;</span><br><span class="line"></span><br><span class="line">&#125;];</span><br></pre></td></tr></table></figure>
 
@@ -415,7 +416,7 @@
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/5.png"></p>
 <p>block内部会引用变量 self，闭包虽然引用了self，但是self并没有引用这个闭包，self.tableview也没有引用 , 没有任何变量引用了block ,   block只是一个局部参数 , 函数执行完毕后 , block的内存就被系统回收了.   而且还有更骚的地方 , 这个block 是一个<strong>NSStackBlock</strong> .  虽然是在arc环境下 , 但是由于没有赋值 ,  没有调copy  所以这个是__NSStackBlock__，自然也没有引起循环依赖。</p>
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/6.png"></p>
-<p>-</p>
+<hr>
 <h3 id="3、block-为什么用copy"><a href="#3、block-为什么用copy" class="headerlink" title="3、block 为什么用copy?"></a>3、block 为什么用copy?</h3><p>一共存在3种类型的block, <code>__NSStackBlock__(栈区block), __NSMallocBlock__(堆区block), __NSGlobalBlock__(全局区)</code>,<br>在MRC下，block是存在栈中，出了函数调用栈就会被回收，copy之后, block放在堆中了, 在作用域之外也可以安全的自由调用。<br>在ARC下, 赋值给某个变量(局部变量,全局变量都可以)后, 系统会自动的copy一次. 在ARC下, 使用copy与strong是一样的, 因为block的retain就是用copy来实现的.</p>
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/7.png"></p>
 
