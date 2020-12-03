@@ -98,13 +98,13 @@
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/2.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/3.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/4.png">
-<meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/8.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/9.png">
+<meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/8.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/10.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/5.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/6.png">
 <meta property="og:image" content="http://nickchenhao.github.io./images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/7.png">
-<meta property="og:updated_time" content="2020-12-02T10:41:23.604Z">
+<meta property="og:updated_time" content="2020-12-03T01:28:29.538Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="循环引用浅析">
 <meta name="twitter:description" content="为什么系统的block，AFN网络请求的block内使用self不会造成循环引用?其实只要抓住循环引用的本质。所谓循环引用，就是A-&amp;gt;B, 同时B-&amp;gt;A, 或者复杂一点的, A-&amp;gt;B-&amp;gt;C, C-&amp;gt;A, 最常见的是当前控制器在引用着block，而block又引用着self即当前控制器，这样就造成了循环引用。 关于这个问题，UIView和AFN还是不一样的。">
@@ -431,7 +431,7 @@
 <p><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/4.png"></p>
 <p>发现dataTask也没有持有success,failure , 只是当成一个普通的block,然后调用了这个block而已.   <br>self并没有强引用 AFHTTPSessionManager * manager , manager只是一个局部变量, 在函数调用栈结束的时候被系统回收.<br>manager也没有持有block,把block当做一个形参使用, 虽然block中持有了self,但是没有形成循环, block执行完成了,block也随之释放了. 所有的变量都被合适的释放了.</p>
 <hr>
-<p>关键点在dataTaskWithRequest内部会创建一个NSURLSessionDataTask类型的dataTask，然后调用addDelegateForDataTask方法时将dataTask和completionHandler这个block传进去，最终dataTask和completionHandler被AFURLSessionManagerTaskDelegate代理对象引用，<br>而AFURLSessionManagerTaskDelegate被mutableTaskDelegatesKeyedByTaskIdentifier字典强引用，在completionHandler执行完后，mutableTaskDelegatesKeyedByTaskIdentifier字典会移除AFURLSessionManagerTaskDelegate对象，这样completionHandler也被释放了，所以外界在AFN的completionHandler中使用self等也不会产生循环引用。<br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/8.png"><br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/9.png"><br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/10.png"></p>
+<p>关键点在dataTaskWithRequest内部会创建一个NSURLSessionDataTask类型的dataTask，<br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/9.png"><br>然后调用addDelegateForDataTask方法时将dataTask和completionHandler这个block传进去，最终dataTask和completionHandler被AFURLSessionManagerTaskDelegate代理对象引用，<br>而AFURLSessionManagerTaskDelegate被mutableTaskDelegatesKeyedByTaskIdentifier字典强引用，<br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/8.png"><br>在completionHandler执行完后，mutableTaskDelegatesKeyedByTaskIdentifier字典会移除AFURLSessionManagerTaskDelegate对象，这样completionHandler也被释放了，所以外界在AFN的completionHandler中使用self等也不会产生循环引用。<br><img src="/images/%E5%BE%AA%E7%8E%AF%E5%BC%95%E7%94%A8/10.png"></p>
 <hr>
 <h3 id="Masonry为什么不会造成循环引用？"><a href="#Masonry为什么不会造成循环引用？" class="headerlink" title="Masonry为什么不会造成循环引用？"></a>Masonry为什么不会造成循环引用？</h3><p>我们再看看Masonry 这个框架, 最常用的就是</p>
 <figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">[imageView mas_makeConstraints:^(MASConstraintMaker *make) &#123;</span><br><span class="line"></span><br><span class="line">&#125;];</span><br></pre></td></tr></table></figure>
@@ -462,7 +462,7 @@
   <p><span>本文标题:</span><a href="/2020/12/02/循环引用浅析/">循环引用浅析</a></p>
   <p><span>文章作者:</span><a href="/" title="访问 陈浩 的个人博客">Nick</a></p>
   <p><span>发布时间:</span>2020年12月02日 - 17:12</p>
-  <p><span>最后更新:</span>2020年12月02日 - 18:12</p>
+  <p><span>最后更新:</span>2020年12月03日 - 09:12</p>
   <p><span>原始链接:</span><a href="/2020/12/02/循环引用浅析/" title="循环引用浅析">http://nickchenhao.github.io./2020/12/02/循环引用浅析/</a>
     <span class="copy-path" title="点击复制文章链接"><i class="fa fa-clipboard" data-clipboard-text="http://nickchenhao.github.io./2020/12/02/循环引用浅析/" aria-label="复制成功！"></i></span>
   </p>
